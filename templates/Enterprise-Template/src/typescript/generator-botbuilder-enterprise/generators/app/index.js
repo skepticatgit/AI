@@ -133,18 +133,7 @@ module.exports = class extends Generator {
         type: "input",
         name: "botName",
         message: `What's the name of your bot?`,
-        default: this.options.botName ? this.options.botName : "enterprise-bot",
-        validate: input => {
-          if (input.length > 12) {
-            this.log(
-              chalk.yellow(
-                "\nWARNING: If the name of the bot has more than 12 characters, it could have some problems deploying some services."
-              )
-            );
-          }
-
-          return true;
-        }
+        default: this.options.botName ? this.options.botName : "enterprise-bot"
       },
       {
         type: "input",
@@ -259,17 +248,27 @@ module.exports = class extends Generator {
 
     this.fs.copy(
       this.templatePath(templateName, "cognitiveModels", "LUIS", botLang, "*"),
-      this.destinationPath(botGenerationPath, "cognitiveModels", "LUIS")
+      this.destinationPath(
+        botGenerationPath,
+        "cognitiveModels",
+        "LUIS",
+        botLang
+      )
     );
 
     this.fs.copy(
       this.templatePath(templateName, "cognitiveModels", "QnA", botLang, "*"),
-      this.destinationPath(botGenerationPath, "cognitiveModels", "QnA")
+      this.destinationPath(botGenerationPath, "cognitiveModels", "QnA", botLang)
     );
 
     this.fs.copy(
       this.templatePath(templateName, "deploymentScripts", botLang, "*"),
-      this.destinationPath(botGenerationPath, "deploymentScripts")
+      this.destinationPath(botGenerationPath, "deploymentScripts", botLang)
+    );
+
+    this.fs.copy(
+      this.templatePath(templateName, "src", "locales"),
+      this.destinationPath(botGenerationPath, "src", "locales")
     );
 
     this.fs.copyTpl(
@@ -303,18 +302,34 @@ module.exports = class extends Generator {
       }
     );
 
+    this.fs.copyTpl(
+      this.templatePath(templateName, "test", "flow", "_botTestBase.js"),
+      this.destinationPath(botGenerationPath, "test", "flow", "botTestBase.js"),
+      {
+        name: botName,
+        description: botDesc,
+        botNameClass: botNamePascalCase,
+        botNameFile: botNameCamelCase
+      }
+    );
+
     this.fs.copy(
       this.templatePath(templateName, "src", "botServices.ts"),
       this.destinationPath(botGenerationPath, "src", "botServices.ts")
     );
 
+    this.fs.copy(
+      this.templatePath(templateName, "_.gitignore"),
+      this.destinationPath(botGenerationPath, ".gitignore")
+    );
+
     const commonFiles = [
       ".env.development",
       ".env.production",
-      ".gitignore",
       "README.md",
       "tsconfig.json",
-      "deploymentScripts/webConfigPrep.js"
+      "deploymentScripts/webConfigPrep.js",
+      "tslint.json"
     ];
 
     commonFiles.forEach(fileName =>
@@ -327,7 +342,6 @@ module.exports = class extends Generator {
     const commonDirectories = [
       "dialogs",
       "extensions",
-      "locales",
       "middleware",
       "serviceClients"
     ];
@@ -336,6 +350,47 @@ module.exports = class extends Generator {
       this.fs.copy(
         this.templatePath(templateName, "src", directory, "**", "*"),
         this.destinationPath(botGenerationPath, "src", directory)
+      )
+    );
+
+    const commonTestFlowFiles = [
+      "escalateDialogTest.js",
+      "mainDialogTest.js",
+      "onboardingDialogTest.js"
+    ];
+
+    commonTestFlowFiles.forEach(testFlowFileName =>
+      this.fs.copy(
+        this.templatePath(templateName, "test", "flow", testFlowFileName),
+        this.destinationPath(
+          botGenerationPath,
+          "test",
+          "flow",
+          testFlowFileName
+        )
+      )
+    );
+
+    const commonTestFiles = [
+      ".env.test",
+      "mocha.opts",
+      "mockedConfiguration.bot",
+      "testBase.js"
+    ];
+
+    commonTestFiles.forEach(testFileName =>
+      this.fs.copy(
+        this.templatePath(templateName, "test", testFileName),
+        this.destinationPath(botGenerationPath, "test", testFileName)
+      )
+    );
+
+    const commonTestDirectories = ["nockFixtures"];
+
+    commonTestDirectories.forEach(directory =>
+      this.fs.copy(
+        this.templatePath(templateName, "test", directory, "**", "*"),
+        this.destinationPath(botGenerationPath, "test", directory)
       )
     );
   }

@@ -12,6 +12,7 @@ using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Schema;
 using Microsoft.Bot.Solutions.Dialogs;
 using Microsoft.Bot.Solutions.Extensions;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
 using $safeprojectname$.Dialogs.Main.Resources;
 using $safeprojectname$.Dialogs.Sample;
@@ -26,15 +27,16 @@ namespace $safeprojectname$.Dialogs.Main
     {
         private bool _skillMode;
         private SkillConfigurationBase _services;
+        private ResponseManager _responseManager;
         private UserState _userState;
         private ConversationState _conversationState;
         private IServiceManager _serviceManager;
         private IStatePropertyAccessor<SkillConversationState> _conversationStateAccessor;
         private IStatePropertyAccessor<SkillUserState> _userStateAccessor;
-        private SkillTemplateResponseBuilder _responseBuilder = new SkillTemplateResponseBuilder();
 
         public MainDialog(
             SkillConfigurationBase services,
+            ResponseManager responseManager,
             ConversationState conversationState,
             UserState userState,
             IBotTelemetryClient telemetryClient,
@@ -44,6 +46,7 @@ namespace $safeprojectname$.Dialogs.Main
         {
             _skillMode = skillMode;
             _services = services;
+            _responseManager = responseManager;
             _conversationState = conversationState;
             _userState = userState;
             _serviceManager = serviceManager;
@@ -62,7 +65,7 @@ namespace $safeprojectname$.Dialogs.Main
             if (!_skillMode)
             {
                 // send a greeting if we're in local mode
-                await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(MainResponses.WelcomeMessage));
+                await dc.Context.SendActivityAsync(_responseManager.GetResponse(MainResponses.WelcomeMessage));
             }
         }
 
@@ -88,6 +91,7 @@ namespace $safeprojectname$.Dialogs.Main
                     SkillMode = _skillMode,
                 };
 
+                var turnResult = EndOfTurn;
                 var result = await luisService.RecognizeAsync<$safeprojectname$LU> (dc.Context, CancellationToken.None);
                 var intent = result?.TopIntent().intent;
 
@@ -95,17 +99,17 @@ namespace $safeprojectname$.Dialogs.Main
                 {
                     case $safeprojectname$LU.Intent.Sample:
                         {
-                            await dc.BeginDialogAsync(nameof(SampleDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(SampleDialog), skillOptions);
                             break;
                         }
 
                     case $safeprojectname$LU.Intent.None:
                         {
                             // No intent was identified, send confused message
-                            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(SharedResponses.DidntUnderstandMessage));
+                            await dc.Context.SendActivityAsync(_responseManager.GetResponse(SharedResponses.DidntUnderstandMessage));
                             if (_skillMode)
                             {
-                                await CompleteAsync(dc);
+                                turnResult = new DialogTurnResult(DialogTurnStatus.Complete);
                             }
 
                             break;
@@ -114,14 +118,19 @@ namespace $safeprojectname$.Dialogs.Main
                     default:
                         {
                             // intent was identified but not yet implemented
-                            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(MainResponses.FeatureNotAvailable));
+                            await dc.Context.SendActivityAsync(_responseManager.GetResponse(MainResponses.FeatureNotAvailable));
                             if (_skillMode)
                             {
-                                await CompleteAsync(dc);
+                                turnResult = new DialogTurnResult(DialogTurnStatus.Complete);
                             }
 
                             break;
                         }
+                }
+
+                if (turnResult != EndOfTurn)
+                {
+                    await CompleteAsync(dc);
                 }
             }
         }
@@ -225,7 +234,7 @@ namespace $safeprojectname$.Dialogs.Main
 
         private async Task<InterruptionAction> OnCancel(DialogContext dc)
         {
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(MainResponses.CancelMessage));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(MainResponses.CancelMessage));
             await CompleteAsync(dc);
             await dc.CancelAllDialogsAsync();
             return InterruptionAction.StartedDialog;
@@ -233,7 +242,7 @@ namespace $safeprojectname$.Dialogs.Main
 
         private async Task<InterruptionAction> OnHelp(DialogContext dc)
         {
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(MainResponses.HelpMessage));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(MainResponses.HelpMessage));
             return InterruptionAction.MessageSentToUser;
         }
 
@@ -259,14 +268,14 @@ namespace $safeprojectname$.Dialogs.Main
                 await adapter.SignOutUserAsync(dc.Context, token.ConnectionName);
             }
 
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(MainResponses.LogOut));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(MainResponses.LogOut));
 
             return InterruptionAction.StartedDialog;
         }
 
         private void RegisterDialogs()
         {
-            AddDialog(new SampleDialog(_services, _conversationStateAccessor, _userStateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new SampleDialog(_services, _responseManager, _conversationStateAccessor, _userStateAccessor, _serviceManager, TelemetryClient));
         }
 
         private class Events

@@ -4,6 +4,7 @@ using System.Collections.Specialized;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using CalendarSkill.Dialogs.CreateEvent.Resources;
 using CalendarSkill.Dialogs.FindContact.Resources;
 using CalendarSkill.Dialogs.Shared;
 using CalendarSkill.Dialogs.Shared.Resources;
@@ -15,7 +16,7 @@ using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Builder.Dialogs.Choices;
 using Microsoft.Bot.Solutions.Data;
-using Microsoft.Bot.Solutions.Extensions;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
 using Microsoft.Bot.Solutions.Util;
 using Microsoft.Graph;
@@ -27,10 +28,11 @@ namespace CalendarSkill.Dialogs.FindContact
     {
         public FindContactDialog(
            SkillConfigurationBase services,
+           ResponseManager responseManager,
            IStatePropertyAccessor<CalendarSkillState> accessor,
            IServiceManager serviceManager,
            IBotTelemetryClient telemetryClient)
-           : base(nameof(FindContactDialog), services, accessor, serviceManager, telemetryClient)
+           : base(nameof(FindContactDialog), services, responseManager, accessor, serviceManager, telemetryClient)
         {
             TelemetryClient = telemetryClient;
 
@@ -63,17 +65,62 @@ namespace CalendarSkill.Dialogs.FindContact
             try
             {
                 var state = await Accessor.GetAsync(sc.Context);
+                var options = (UpdateUserNameDialogOptions)sc.Options;
+                if (options.Reason == UpdateUserNameDialogOptions.UpdateReason.ConfirmNo)
+                {
+                    return await sc.PromptAsync(
+                        Actions.Prompt,
+                        new PromptOptions
+                        {
+                            Prompt = ResponseManager.GetResponse(CreateEventResponses.NoAttendees)
+                        });
+                }
+
                 var currentRecipientName = state.AttendeesNameList[state.ConfirmAttendeesNameIndex];
                 if (state.FirstRetryInFindContact)
                 {
                     state.FirstRetryInFindContact = false;
-                    return await sc.PromptAsync(Actions.Prompt, new PromptOptions { Prompt = sc.Context.Activity.CreateReply(FindContactResponses.UserNotFound) });
+                    return await sc.PromptAsync(
+                        Actions.Prompt,
+                        new PromptOptions
+                        {
+                            Prompt = ResponseManager.GetResponse(
+                                FindContactResponses.UserNotFound,
+                                new StringDictionary()
+                                {
+                                    { "UserName", state.AttendeesNameList[state.ConfirmAttendeesNameIndex] }
+                                })
+                        });
                 }
                 else
                 {
-                    await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.UserNotFoundAgain, null, new StringDictionary() { { "source", state.EventSource == EventSource.Microsoft ? "Outlook Calendar" : "Google Calendar" } }));
-                    state.FirstRetryInFindContact = true;
-                    return await sc.CancelAllDialogsAsync();
+                    if (state.ConfirmAttendeesNameIndex < state.AttendeesNameList.Count())
+                    {
+                        await sc.Context.SendActivityAsync(ResponseManager.GetResponse(
+                            FindContactResponses.UserNotFoundAgain,
+                            new StringDictionary()
+                            {
+                                { "source", state.EventSource == Models.EventSource.Microsoft ? "Outlook" : "Gmail" },
+                                { "UserName", state.AttendeesNameList[state.ConfirmAttendeesNameIndex] }
+                            }));
+                        state.ConfirmAttendeesNameIndex++;
+                        state.FirstRetryInFindContact = true;
+                        await sc.CancelAllDialogsAsync();
+                        return await sc.BeginDialogAsync(Actions.ConfirmName, options: sc.Options);
+                    }
+                    else
+                    {
+                        await sc.Context.SendActivityAsync(ResponseManager.GetResponse(
+                          FindContactResponses.UserNotFoundAgain,
+                          new StringDictionary()
+                          {
+                                { "source", state.EventSource == Models.EventSource.Microsoft ? "Outlook" : "Gmail" },
+                                { "UserName", state.AttendeesNameList[state.ConfirmAttendeesNameIndex] }
+                          }));
+                        state.ConfirmAttendeesNameIndex = 0;
+                        state.FirstRetryInFindContact = true;
+                        return await sc.CancelAllDialogsAsync();
+                    }
                 }
             }
             catch (Exception ex)
@@ -93,7 +140,7 @@ namespace CalendarSkill.Dialogs.FindContact
 
                 if (string.IsNullOrEmpty(userInput))
                 {
-                    await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.UserNotFoundAgain, null, new StringDictionary() { { "source", state.EventSource == EventSource.Microsoft ? "Outlook Calendar" : "Google Calendar" } }));
+                    await sc.Context.SendActivityAsync(ResponseManager.GetResponse(FindContactResponses.UserNotFoundAgain, new StringDictionary() { { "source", state.EventSource == EventSource.Microsoft ? "Outlook Calendar" : "Google Calendar" } }));
                     return await sc.EndDialogAsync();
                 }
 
@@ -103,14 +150,19 @@ namespace CalendarSkill.Dialogs.FindContact
                     {
                         state.AttendeesNameList.Add(userInput);
                     }
+
+                    state.AttendeesNameList.RemoveAt(state.ConfirmAttendeesNameIndex);
                 }
                 else
                 {
+                    state.UnconfirmedPerson.Clear();
                     state.AttendeesNameList[state.ConfirmAttendeesNameIndex] = userInput;
                 }
 
+                await sc.CancelAllDialogsAsync();
+
                 // should not return with value, next step use the return value for confirmation.
-                return await sc.EndDialogAsync();
+                return await sc.BeginDialogAsync(Actions.ConfirmName, options: sc.Options);
             }
             catch (Exception ex)
             {
@@ -128,7 +180,7 @@ namespace CalendarSkill.Dialogs.FindContact
 
                 if ((state.AttendeesNameList == null) || (state.AttendeesNameList.Count == 0))
                 {
-                    return await sc.BeginDialogAsync(Actions.UpdateName);
+                    return await sc.BeginDialogAsync(Actions.UpdateName, new UpdateUserNameDialogOptions(UpdateUserNameDialogOptions.UpdateReason.NotFound));
                 }
 
                 var unionList = new List<CustomizedPerson>();
@@ -148,7 +200,7 @@ namespace CalendarSkill.Dialogs.FindContact
                     if (state.AttendeesNameList.Count > 1)
                     {
                         var nameString = await GetReadyToSendNameListStringAsync(sc);
-                        await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.BeforeSendingMessage, null, new StringDictionary() { { "NameList", nameString } }));
+                        await sc.Context.SendActivityAsync(ResponseManager.GetResponse(FindContactResponses.BeforeSendingMessage, new StringDictionary() { { "NameList", nameString } }));
                     }
                 }
 
@@ -179,65 +231,78 @@ namespace CalendarSkill.Dialogs.FindContact
                     }
                 }
 
-                if (state.UnconfirmedPerson.Count == 0 || state.ConfirmAttendeesNameIndex < state.AttendeesNameList.Count)
+                if (state.ConfirmAttendeesNameIndex < state.AttendeesNameList.Count)
                 {
                     var currentRecipientName = state.AttendeesNameList[state.ConfirmAttendeesNameIndex];
 
-                    var originPersonList = await GetPeopleWorkWithAsync(sc, currentRecipientName);
-                    var originContactList = await GetContactsAsync(sc, currentRecipientName);
-                    originPersonList.AddRange(originContactList);
-
-                    var originUserList = new List<PersonModel>();
-                    try
+                    if (CreateEventWhiteList.GetMyself().Contains(currentRecipientName))
                     {
-                        originUserList = await GetUserAsync(sc, currentRecipientName);
+                        var me = await GetMe(sc);
+                        unionList.Add(new CustomizedPerson(me));
                     }
-                    catch
+                    else
                     {
-                        // do nothing when get user failed. because can not use token to ensure user use a work account.
-                    }
+                        var originPersonList = await GetPeopleWorkWithAsync(sc, currentRecipientName);
+                        var originContactList = await GetContactsAsync(sc, currentRecipientName);
+                        originPersonList.AddRange(originContactList);
 
-                    (var personList, var userList) = FormatRecipientList(originPersonList, originUserList);
-
-                    // people you work with has the distinct email address has the highest priority
-                    if (personList.Count == 1 && personList.First().Emails.Count == 1)
-                    {
-                        var highestPriorityPerson = new CustomizedPerson(personList.First());
-                        return await sc.ReplaceDialogAsync(Actions.ConfirmEmail, highestPriorityPerson);
-                    }
-
-                    personList.AddRange(userList);
-
-                    foreach (var person in personList)
-                    {
-                        if (unionList.Find(p => p.DisplayName == person.DisplayName) == null)
+                        var originUserList = new List<PersonModel>();
+                        try
                         {
-                            var personWithSameName = personList.FindAll(p => p.DisplayName == person.DisplayName);
-                            if (personWithSameName.Count == 1)
-                            {
-                                unionList.Add(new CustomizedPerson(personWithSameName.First()));
-                            }
-                            else
-                            {
-                                var unionPerson = new CustomizedPerson(personWithSameName.FirstOrDefault());
-                                var curEmailList = new List<ScoredEmailAddress>();
-                                foreach (var sameNamePerson in personWithSameName)
-                                {
-                                    sameNamePerson.Emails.ToList().ForEach(e => curEmailList.Add(new ScoredEmailAddress { Address = e }));
-                                }
+                            originUserList = await GetUserAsync(sc, currentRecipientName);
+                        }
+                        catch
+                        {
+                            // do nothing when get user failed. because can not use token to ensure user use a work account.
+                        }
 
-                                unionPerson.Emails = curEmailList;
-                                unionList.Add(unionPerson);
+                        (var personList, var userList) = FormatRecipientList(originPersonList, originUserList);
+
+                        // people you work with has the distinct email address has the highest priority
+                        if (personList.Count == 1 && personList.First().Emails.Count == 1)
+                        {
+                            state.ConfirmedPerson = new CustomizedPerson(personList.First());
+                            var highestPriorityPerson = new CustomizedPerson(personList.First());
+                            return await sc.ReplaceDialogAsync(Actions.ConfirmEmail, highestPriorityPerson);
+                        }
+
+                        personList.AddRange(userList);
+
+                        foreach (var person in personList)
+                        {
+                            if (unionList.Find(p => p.DisplayName == person.DisplayName) == null)
+                            {
+                                var personWithSameName = personList.FindAll(p => p.DisplayName == person.DisplayName);
+                                if (personWithSameName.Count == 1)
+                                {
+                                    unionList.Add(new CustomizedPerson(personWithSameName.First()));
+                                }
+                                else
+                                {
+                                    var unionPerson = new CustomizedPerson(personWithSameName.FirstOrDefault());
+                                    var curEmailList = new List<ScoredEmailAddress>();
+                                    foreach (var sameNamePerson in personWithSameName)
+                                    {
+                                        sameNamePerson.Emails.ToList().ForEach(e => curEmailList.Add(new ScoredEmailAddress { Address = e }));
+                                    }
+
+                                    unionPerson.Emails = curEmailList;
+                                    unionList.Add(unionPerson);
+                                }
                             }
                         }
                     }
-
-                    state.UnconfirmedPerson = unionList;
                 }
+                else
+                {
+                    return await sc.EndDialogAsync();
+                }
+
+                state.UnconfirmedPerson = unionList;
 
                 if (unionList.Count == 0)
                 {
-                    return await sc.BeginDialogAsync(Actions.UpdateName);
+                    return await sc.BeginDialogAsync(Actions.UpdateName, new UpdateUserNameDialogOptions(UpdateUserNameDialogOptions.UpdateReason.NotFound));
                 }
                 else if (unionList.Count == 1)
                 {
@@ -297,7 +362,7 @@ namespace CalendarSkill.Dialogs.FindContact
                             }
                             else
                             {
-                                await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.AlreadyFirstPage));
+                                await sc.Context.SendActivityAsync(ResponseManager.GetResponse(FindContactResponses.AlreadyFirstPage));
                             }
                         }
                         else
@@ -340,17 +405,7 @@ namespace CalendarSkill.Dialogs.FindContact
             if (confirmedPerson.Emails.Count() == 1)
             {
                 // Highest probability
-                var attendee = new EventModel.Attendee
-                {
-                    DisplayName = name,
-                    Address = confirmedPerson.Emails.First().Address
-                };
-                if (state.Attendees.All(r => r.Address != attendee.Address))
-                {
-                    state.Attendees.Add(attendee);
-                }
-
-                return await sc.PromptAsync(Actions.TakeFurtherAction, new PromptOptions { Prompt = sc.Context.Activity.CreateReply(FindContactResponses.PromptOneNameOneAddress, null, new StringDictionary() { { "UserName", name }, { "EmailAddress", confirmedPerson.Emails.First().Address } }), });
+                return await sc.PromptAsync(Actions.TakeFurtherAction, new PromptOptions { Prompt = ResponseManager.GetResponse(FindContactResponses.PromptOneNameOneAddress, new StringDictionary() { { "UserName", name }, { "EmailAddress", confirmedPerson.Emails.First().Address ?? confirmedPerson.UserPrincipalName } }), });
             }
             else
             {
@@ -373,10 +428,23 @@ namespace CalendarSkill.Dialogs.FindContact
             try
             {
                 var state = await Accessor.GetAsync(sc.Context);
+                var confirmedPerson = state.ConfirmedPerson;
+                var name = confirmedPerson.DisplayName;
                 if (sc.Result is bool)
                 {
                     if ((bool)sc.Result)
                     {
+                        var attendee = new EventModel.Attendee
+                        {
+                            DisplayName = name,
+                            Address = confirmedPerson.Emails.First().Address
+                        };
+                        if (state.Attendees.All(r => r.Address != attendee.Address))
+                        {
+                            state.Attendees.Add(attendee);
+                        }
+
+                        state.FirstRetryInFindContact = true;
                         state.ConfirmAttendeesNameIndex++;
                         if (state.ConfirmAttendeesNameIndex < state.AttendeesNameList.Count)
                         {
@@ -389,7 +457,7 @@ namespace CalendarSkill.Dialogs.FindContact
                     }
                     else
                     {
-                        return await sc.BeginDialogAsync(Actions.UpdateName);
+                        return await sc.BeginDialogAsync(Actions.UpdateName, new UpdateUserNameDialogOptions(UpdateUserNameDialogOptions.UpdateReason.ConfirmNo));
                     }
                 }
 
@@ -414,7 +482,7 @@ namespace CalendarSkill.Dialogs.FindContact
                             }
                             else
                             {
-                                await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.AlreadyFirstPage));
+                                await sc.Context.SendActivityAsync(ResponseManager.GetResponse(FindContactResponses.AlreadyFirstPage));
                             }
                         }
                         else
@@ -423,7 +491,6 @@ namespace CalendarSkill.Dialogs.FindContact
                             state.ShowAttendeesIndex = 0;
                         }
 
-                        var confirmedPerson = state.ConfirmedPerson;
                         return await sc.ReplaceDialogAsync(Actions.ConfirmEmail, confirmedPerson);
                     }
 
@@ -442,6 +509,7 @@ namespace CalendarSkill.Dialogs.FindContact
                         }
 
                         state.ConfirmAttendeesNameIndex++;
+                        state.FirstRetryInFindContact = true;
 
                         // Clean up data
                         state.ShowAttendeesIndex = 0;
@@ -480,18 +548,18 @@ namespace CalendarSkill.Dialogs.FindContact
                 state.ShowAttendeesIndex--;
                 pageIndex = state.ShowAttendeesIndex;
                 skip = pageSize * pageIndex;
-                await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.AlreadyLastPage));
+                await sc.Context.SendActivityAsync(ResponseManager.GetResponse(FindContactResponses.AlreadyLastPage));
             }
 
             var options = new PromptOptions
             {
                 Choices = new List<Choice>(),
-                Prompt = context.Activity.CreateReply(FindContactResponses.ConfirmMultiplContactEmailSinglePage, null, new StringDictionary() { { "UserName", confirmedPerson.DisplayName } })
+                Prompt = ResponseManager.GetResponse(FindContactResponses.ConfirmMultiplContactEmailSinglePage, new StringDictionary() { { "UserName", confirmedPerson.DisplayName } })
             };
 
             if (!isSinglePage)
             {
-                options.Prompt = context.Activity.CreateReply(FindContactResponses.ConfirmMultiplContactEmailMultiPage, null, new StringDictionary() { { "UserName", confirmedPerson.DisplayName } });
+                options.Prompt = ResponseManager.GetResponse(FindContactResponses.ConfirmMultiplContactEmailMultiPage, new StringDictionary() { { "UserName", confirmedPerson.DisplayName } });
             }
 
             for (var i = 0; i < emailList.Count; i++)
@@ -517,7 +585,7 @@ namespace CalendarSkill.Dialogs.FindContact
                     {
                         options.Prompt.Speak = SpeakHelper.ToSpeechSelectionDetailString(options, Common.ConfigData.GetInstance().MaxDisplaySize);
                         options.Prompt.Text += "\r\n" + GetSelectPromptEmailString(options, true);
-                        options.RetryPrompt = context.Activity.CreateReply(CalendarSharedResponses.DidntUnderstandMessage);
+                        options.RetryPrompt = ResponseManager.GetResponse(CalendarSharedResponses.DidntUnderstandMessage);
                         return options;
                     }
 
@@ -531,7 +599,7 @@ namespace CalendarSkill.Dialogs.FindContact
 
             options.Prompt.Speak = SpeakHelper.ToSpeechSelectionDetailString(options, Common.ConfigData.GetInstance().MaxDisplaySize);
             options.Prompt.Text += "\r\n" + GetSelectPromptEmailString(options, true);
-            options.RetryPrompt = context.Activity.CreateReply(CalendarSharedResponses.DidntUnderstandMessage);
+            options.RetryPrompt = ResponseManager.GetResponse(CalendarSharedResponses.DidntUnderstandMessage);
             return options;
         }
 
@@ -567,18 +635,18 @@ namespace CalendarSkill.Dialogs.FindContact
                 state.ShowAttendeesIndex--;
                 pageIndex = state.ShowAttendeesIndex;
                 skip = pageSize * pageIndex;
-                await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(FindContactResponses.AlreadyLastPage));
+                await sc.Context.SendActivityAsync(ResponseManager.GetResponse(FindContactResponses.AlreadyLastPage));
             }
 
             var options = new PromptOptions
             {
                 Choices = new List<Choice>(),
-                Prompt = context.Activity.CreateReply(FindContactResponses.ConfirmMultipleContactNameSinglePage, null, new StringDictionary() { { "UserName", currentRecipientName } })
+                Prompt = ResponseManager.GetResponse(FindContactResponses.ConfirmMultipleContactNameSinglePage, new StringDictionary() { { "UserName", currentRecipientName } })
             };
 
             if (!isSinglePage)
             {
-                options.Prompt = context.Activity.CreateReply(FindContactResponses.ConfirmMultipleContactNameMultiPage, null, new StringDictionary() { { "UserName", currentRecipientName } });
+                options.Prompt = ResponseManager.GetResponse(FindContactResponses.ConfirmMultipleContactNameMultiPage, new StringDictionary() { { "UserName", currentRecipientName } });
             }
 
             for (var i = 0; i < unionList.Count; i++)
@@ -603,7 +671,7 @@ namespace CalendarSkill.Dialogs.FindContact
                     {
                         options.Prompt.Speak = SpeakHelper.ToSpeechSelectionDetailString(options, Common.ConfigData.GetInstance().MaxDisplaySize);
                         options.Prompt.Text = GetSelectPromptString(options, true);
-                        options.RetryPrompt = context.Activity.CreateReply(CalendarSharedResponses.DidntUnderstandMessage);
+                        options.RetryPrompt = ResponseManager.GetResponse(CalendarSharedResponses.DidntUnderstandMessage);
                         return options;
                     }
 
@@ -617,7 +685,7 @@ namespace CalendarSkill.Dialogs.FindContact
 
             options.Prompt.Speak = SpeakHelper.ToSpeechSelectionDetailString(options, Common.ConfigData.GetInstance().MaxDisplaySize);
             options.Prompt.Text = GetSelectPromptString(options, true);
-            options.RetryPrompt = context.Activity.CreateReply(CalendarSharedResponses.DidntUnderstandMessage);
+            options.RetryPrompt = ResponseManager.GetResponse(CalendarSharedResponses.DidntUnderstandMessage);
             return options;
         }
     }

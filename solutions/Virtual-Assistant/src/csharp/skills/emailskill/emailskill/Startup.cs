@@ -5,7 +5,14 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using EmailSkill.Dialogs.DeleteEmail.Resources;
+using EmailSkill.Dialogs.FindContact.Resources;
+using EmailSkill.Dialogs.ForwardEmail.Resources;
+using EmailSkill.Dialogs.Main.Resources;
+using EmailSkill.Dialogs.ReplyEmail.Resources;
+using EmailSkill.Dialogs.SendEmail.Resources;
 using EmailSkill.Dialogs.Shared.Resources;
+using EmailSkill.Dialogs.ShowEmail.Resources;
 using EmailSkill.ServiceClients;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -16,9 +23,9 @@ using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using Microsoft.Bot.Configuration;
 using Microsoft.Bot.Connector.Authentication;
 using Microsoft.Bot.Schema;
-using Microsoft.Bot.Solutions.Extensions;
 using Microsoft.Bot.Solutions.Middleware;
 using Microsoft.Bot.Solutions.Middleware.Telemetry;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,6 +68,24 @@ namespace EmailSkill
             var connectedServices = new SkillConfiguration(botConfig, languageModels, supportedProviders, parameters, configuration);
             services.AddSingleton<SkillConfigurationBase>(sp => connectedServices);
 
+            var supportedLanguages = languageModels.Select(l => l.Key).ToArray();
+            var responses = new IResponseIdCollection[]
+            {
+                    new FindContactResponses(),
+                    new DeleteEmailResponses(),
+                    new ForwardEmailResponses(),
+                    new EmailMainResponses(),
+                    new ReplyEmailResponses(),
+                    new SendEmailResponses(),
+                    new EmailSharedResponses(),
+                    new ShowEmailResponses(),
+            };
+
+            var responseManager = new ResponseManager(responses, supportedLanguages);
+
+            // Register bot responses for all supported languages.
+            services.AddSingleton(sp => responseManager);
+
             var defaultLocale = Configuration.GetSection("defaultLocale").Get<string>();
 
             // Initialize Bot State
@@ -101,14 +126,14 @@ namespace EmailSkill
                 // Telemetry Middleware (logs activity messages in Application Insights)
                 var sp = services.BuildServiceProvider();
                 var telemetryClient = sp.GetService<IBotTelemetryClient>();
-                var appInsightsLogger = new TelemetryLoggerMiddleware(telemetryClient, logUserName: true, logOriginalMessage: true);
+                var appInsightsLogger = new TelemetryLoggerMiddleware(telemetryClient, logPersonalInformation: true);
                 options.Middleware.Add(appInsightsLogger);
 
                 // Catches any errors that occur during a conversation turn and logs them to AppInsights.
                 options.OnTurnError = async (context, exception) =>
                 {
                     CultureInfo.CurrentUICulture = new CultureInfo(context.Activity.Locale);
-                    await context.SendActivityAsync(context.Activity.CreateReply(EmailSharedResponses.EmailErrorMessage));
+                    await context.SendActivityAsync(responseManager.GetResponse(EmailSharedResponses.EmailErrorMessage));
                     await context.SendActivityAsync(new Activity(type: ActivityTypes.Trace, text: $"Email Skill Error: {exception.Message} | {exception.StackTrace}"));
                     telemetryClient.TrackExceptionEx(exception, context.Activity);
                 };

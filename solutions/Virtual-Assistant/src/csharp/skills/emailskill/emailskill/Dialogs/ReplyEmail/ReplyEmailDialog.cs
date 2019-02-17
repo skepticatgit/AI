@@ -11,7 +11,7 @@ using EmailSkill.ServiceClients;
 using EmailSkill.Util;
 using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Dialogs;
-using Microsoft.Bot.Solutions.Extensions;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
 using Microsoft.Bot.Solutions.Util;
 
@@ -21,11 +21,12 @@ namespace EmailSkill.Dialogs.ReplyEmail
     {
         public ReplyEmailDialog(
             SkillConfigurationBase services,
+            ResponseManager responseManager,
             IStatePropertyAccessor<EmailSkillState> emailStateAccessor,
             IStatePropertyAccessor<DialogState> dialogStateAccessor,
             IServiceManager serviceManager,
             IBotTelemetryClient telemetryClient)
-            : base(nameof(ReplyEmailDialog), services, emailStateAccessor, dialogStateAccessor, serviceManager, telemetryClient)
+            : base(nameof(ReplyEmailDialog), services, responseManager, emailStateAccessor, dialogStateAccessor, serviceManager, telemetryClient)
         {
             TelemetryClient = telemetryClient;
 
@@ -34,6 +35,7 @@ namespace EmailSkill.Dialogs.ReplyEmail
                 IfClearContextStep,
                 GetAuthToken,
                 AfterGetAuthToken,
+                SetDisplayConfig,
                 CollectSelectedEmail,
                 AfterCollectSelectedEmail,
                 CollectAdditionalText,
@@ -73,13 +75,13 @@ namespace EmailSkill.Dialogs.ReplyEmail
                     var state = await EmailStateAccessor.GetAsync(sc.Context);
                     var token = state.Token;
                     var message = state.Message.FirstOrDefault();
-                    var content = state.Content;
 
                     var service = ServiceManager.InitMailService(token, state.GetUserTimeZone(), state.MailSourceType);
 
                     // reply user message.
                     if (message != null)
                     {
+                        var content = state.Content.Equals(EmailCommonStrings.EmptyContent) ? string.Empty : state.Content;
                         await service.ReplyToMessageAsync(message.Id, content);
                     }
 
@@ -87,22 +89,26 @@ namespace EmailSkill.Dialogs.ReplyEmail
 
                     var emailCard = new EmailCardData
                     {
-                        Subject = string.Format(EmailCommonStrings.SubjectFormat, state.Subject),
+                        Subject = state.Subject.Equals(EmailCommonStrings.EmptySubject) ? null : string.Format(EmailCommonStrings.SubjectFormat, state.Subject),
                         NameList = string.Format(EmailCommonStrings.ToFormat, nameListString),
-                        EmailContent = string.Format(EmailCommonStrings.ContentFormat, state.Content),
+                        EmailContent = state.Content.Equals(EmailCommonStrings.EmptyContent) ? null : string.Format(EmailCommonStrings.ContentFormat, state.Content),
                     };
 
                     var stringToken = new StringDictionary
                     {
                         { "Subject", state.Subject },
                     };
-                    var replyMessage = sc.Context.Activity.CreateAdaptiveCardReply(EmailSharedResponses.SentSuccessfully, "Dialogs/Shared/Resources/Cards/EmailWithOutButtonCard.json", emailCard, tokens: stringToken);
 
-                    await sc.Context.SendActivityAsync(replyMessage);
+                    var reply = ResponseManager.GetCardResponse(
+                        EmailSharedResponses.SentSuccessfully,
+                        new Card("EmailWithOutButtonCard", emailCard),
+                        stringToken);
+
+                    await sc.Context.SendActivityAsync(reply);
                 }
                 else
                 {
-                    await sc.Context.SendActivityAsync(sc.Context.Activity.CreateReply(EmailSharedResponses.CancellingMessage));
+                    await sc.Context.SendActivityAsync(ResponseManager.GetResponse(EmailSharedResponses.CancellingMessage));
                 }
             }
             catch (Exception ex)

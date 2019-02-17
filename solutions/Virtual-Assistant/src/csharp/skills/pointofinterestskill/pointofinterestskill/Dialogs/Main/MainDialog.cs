@@ -12,15 +12,13 @@ using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Schema;
 using Microsoft.Bot.Solutions.Dialogs;
-using Microsoft.Bot.Solutions.Extensions;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
-using PointOfInterestSkill.Dialogs.Cancel;
 using PointOfInterestSkill.Dialogs.CancelRoute;
 using PointOfInterestSkill.Dialogs.FindPointOfInterest;
 using PointOfInterestSkill.Dialogs.Main.Resources;
 using PointOfInterestSkill.Dialogs.Route;
 using PointOfInterestSkill.Dialogs.Route.Resources;
-using PointOfInterestSkill.Dialogs.Shared;
 using PointOfInterestSkill.Dialogs.Shared.DialogOptions;
 using PointOfInterestSkill.Dialogs.Shared.Resources;
 using PointOfInterestSkill.Models;
@@ -32,14 +30,15 @@ namespace PointOfInterestSkill.Dialogs.Main
     {
         private bool _skillMode;
         private SkillConfigurationBase _services;
+        private ResponseManager _responseManager;
         private UserState _userState;
         private ConversationState _conversationState;
         private IServiceManager _serviceManager;
         private IStatePropertyAccessor<PointOfInterestSkillState> _stateAccessor;
-        private PointOfInterestResponseBuilder _responseBuilder = new PointOfInterestResponseBuilder();
 
         public MainDialog(
             SkillConfigurationBase services,
+            ResponseManager responseManager,
             ConversationState conversationState,
             UserState userState,
             IBotTelemetryClient telemetryClient,
@@ -49,6 +48,7 @@ namespace PointOfInterestSkill.Dialogs.Main
         {
             _skillMode = skillMode;
             _services = services;
+            _responseManager = responseManager;
             _userState = userState;
             _conversationState = conversationState;
             _serviceManager = serviceManager;
@@ -66,14 +66,12 @@ namespace PointOfInterestSkill.Dialogs.Main
             if (!_skillMode)
             {
                 // send a greeting if we're in local mode
-                await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(POIMainResponses.PointOfInterestWelcomeMessage));
+                await dc.Context.SendActivityAsync(_responseManager.GetResponse(POIMainResponses.PointOfInterestWelcomeMessage));
             }
         }
 
         protected override async Task RouteAsync(DialogContext dc, CancellationToken cancellationToken = default(CancellationToken))
         {
-            var routeResult = EndOfTurn;
-
             // get current activity locale
             var locale = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
             var localeConfig = _services.LocaleConfigurations[locale];
@@ -87,8 +85,8 @@ namespace PointOfInterestSkill.Dialogs.Main
             }
             else
             {
-                var result = await luisService.RecognizeAsync<PointOfInterest>(dc, true, CancellationToken.None);
-
+                var turnResult = EndOfTurn;
+                var result = await luisService.RecognizeAsync<PointOfInterestLU>(dc, true, CancellationToken.None);
                 var intent = result?.TopIntent().intent;
 
                 var skillOptions = new PointOfInterestSkillDialogOptions
@@ -99,30 +97,30 @@ namespace PointOfInterestSkill.Dialogs.Main
                 // switch on general intents
                 switch (intent)
                 {
-                    case PointOfInterest.Intent.NAVIGATION_ROUTE_FROM_X_TO_Y:
+                    case PointOfInterestLU.Intent.NAVIGATION_ROUTE_FROM_X_TO_Y:
                         {
-                            routeResult = await dc.BeginDialogAsync(nameof(RouteDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(RouteDialog), skillOptions);
                             break;
                         }
 
-                    case PointOfInterest.Intent.NAVIGATION_CANCEL_ROUTE:
+                    case PointOfInterestLU.Intent.NAVIGATION_CANCEL_ROUTE:
                         {
-                            routeResult = await dc.BeginDialogAsync(nameof(CancelRouteDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(CancelRouteDialog), skillOptions);
                             break;
                         }
 
-                    case PointOfInterest.Intent.NAVIGATION_FIND_POINTOFINTEREST:
+                    case PointOfInterestLU.Intent.NAVIGATION_FIND_POINTOFINTEREST:
                         {
-                            routeResult = await dc.BeginDialogAsync(nameof(FindPointOfInterestDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(FindPointOfInterestDialog), skillOptions);
                             break;
                         }
 
-                    case PointOfInterest.Intent.None:
+                    case PointOfInterestLU.Intent.None:
                         {
-                            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(POISharedResponses.DidntUnderstandMessage));
+                            await dc.Context.SendActivityAsync(_responseManager.GetResponse(POISharedResponses.DidntUnderstandMessage));
                             if (_skillMode)
                             {
-                                routeResult = new DialogTurnResult(DialogTurnStatus.Complete);
+                                turnResult = new DialogTurnResult(DialogTurnStatus.Complete);
                             }
 
                             break;
@@ -130,21 +128,21 @@ namespace PointOfInterestSkill.Dialogs.Main
 
                     default:
                         {
-                            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(POIMainResponses.FeatureNotAvailable));
+                            await dc.Context.SendActivityAsync(_responseManager.GetResponse(POIMainResponses.FeatureNotAvailable));
 
                             if (_skillMode)
                             {
-                                routeResult = new DialogTurnResult(DialogTurnStatus.Complete);
+                                turnResult = new DialogTurnResult(DialogTurnStatus.Complete);
                             }
 
                             break;
                         }
                 }
-            }
 
-            if (routeResult.Status == DialogTurnStatus.Complete)
-            {
-                await CompleteAsync(dc);
+                if (turnResult != EndOfTurn)
+                {
+                    await CompleteAsync(dc);
+                }
             }
         }
 
@@ -159,7 +157,7 @@ namespace PointOfInterestSkill.Dialogs.Main
             }
             else
             {
-                await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(POISharedResponses.ActionEnded));
+                await dc.Context.SendActivityAsync(_responseManager.GetResponse(POISharedResponses.ActionEnded));
             }
 
             // End active dialog
@@ -256,7 +254,7 @@ namespace PointOfInterestSkill.Dialogs.Main
                             state.FoundRoutes = null;
                         }
 
-                        var replyMessage = dc.Context.Activity.CreateReply(RouteResponses.SendingRouteDetails);
+                        var replyMessage = _responseManager.GetResponse(RouteResponses.SendingRouteDetails);
                         await dc.Context.SendActivityAsync(replyMessage);
 
                         // Send event with active route data
@@ -281,7 +279,7 @@ namespace PointOfInterestSkill.Dialogs.Main
                 var localeConfig = _services.LocaleConfigurations[locale];
 
                 // Update state with email luis result and entities
-                var poiLuisResult = await localeConfig.LuisServices["pointofinterest"].RecognizeAsync<PointOfInterest>(dc.Context, cancellationToken);
+                var poiLuisResult = await localeConfig.LuisServices["pointofinterest"].RecognizeAsync<PointOfInterestLU>(dc.Context, cancellationToken);
                 var state = await _stateAccessor.GetAsync(dc.Context, () => new PointOfInterestSkillState());
                 state.LuisResult = poiLuisResult;
 
@@ -325,13 +323,15 @@ namespace PointOfInterestSkill.Dialogs.Main
 
         private async Task<InterruptionAction> OnCancel(DialogContext dc)
         {
-            await dc.BeginDialogAsync(nameof(CancelDialog));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(POIMainResponses.CancelMessage));
+            await CompleteAsync(dc);
+            await dc.CancelAllDialogsAsync();
             return InterruptionAction.StartedDialog;
         }
 
         private async Task<InterruptionAction> OnHelp(DialogContext dc)
         {
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(POIMainResponses.HelpMessage));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(POIMainResponses.HelpMessage));
             return InterruptionAction.MessageSentToUser;
         }
 
@@ -357,17 +357,16 @@ namespace PointOfInterestSkill.Dialogs.Main
                 await adapter.SignOutUserAsync(dc.Context, token.ConnectionName);
             }
 
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(POIMainResponses.LogOut));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(POIMainResponses.LogOut));
 
             return InterruptionAction.StartedDialog;
         }
 
         private void RegisterDialogs()
         {
-            AddDialog(new RouteDialog(_services, _stateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new CancelRouteDialog(_services, _stateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new FindPointOfInterestDialog(_services, _stateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new CancelDialog(_stateAccessor, TelemetryClient));
+            AddDialog(new RouteDialog(_services, _responseManager, _stateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new CancelRouteDialog(_services, _responseManager, _stateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new FindPointOfInterestDialog(_services, _responseManager, _stateAccessor, _serviceManager, TelemetryClient));
         }
 
         public class Events

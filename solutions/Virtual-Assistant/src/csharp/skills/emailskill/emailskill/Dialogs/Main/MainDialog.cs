@@ -11,7 +11,6 @@ using EmailSkill.Dialogs.ForwardEmail;
 using EmailSkill.Dialogs.Main.Resources;
 using EmailSkill.Dialogs.ReplyEmail;
 using EmailSkill.Dialogs.SendEmail;
-using EmailSkill.Dialogs.Shared;
 using EmailSkill.Dialogs.Shared.DialogOptions;
 using EmailSkill.Dialogs.Shared.Resources;
 using EmailSkill.Dialogs.ShowEmail;
@@ -22,7 +21,7 @@ using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Schema;
 using Microsoft.Bot.Solutions.Data;
 using Microsoft.Bot.Solutions.Dialogs;
-using Microsoft.Bot.Solutions.Extensions;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
 
 namespace EmailSkill.Dialogs.Main
@@ -31,18 +30,26 @@ namespace EmailSkill.Dialogs.Main
     {
         private bool _skillMode;
         private SkillConfigurationBase _skillConfig;
+        private ResponseManager _responseManager;
         private UserState _userState;
         private ConversationState _conversationState;
         private IServiceManager _serviceManager;
         private IStatePropertyAccessor<EmailSkillState> _stateAccessor;
         private IStatePropertyAccessor<DialogState> _dialogStateAccessor;
-        private EmailSkillResponseBuilder _responseBuilder = new EmailSkillResponseBuilder();
 
-        public MainDialog(SkillConfigurationBase skillConfiguration, ConversationState conversationState, UserState userState, IBotTelemetryClient telemetryClient, IServiceManager serviceManager, bool skillMode)
+        public MainDialog(
+            SkillConfigurationBase skillConfiguration,
+            ResponseManager responseManager,
+            ConversationState conversationState,
+            UserState userState,
+            IBotTelemetryClient telemetryClient,
+            IServiceManager serviceManager,
+            bool skillMode)
             : base(nameof(MainDialog), telemetryClient)
         {
             _skillMode = skillMode;
             _skillConfig = skillConfiguration;
+            _responseManager = responseManager;
             _conversationState = conversationState;
             _userState = userState;
             TelemetryClient = telemetryClient;
@@ -61,7 +68,7 @@ namespace EmailSkill.Dialogs.Main
             if (!_skillMode)
             {
                 // send a greeting if we're in local mode
-                await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(EmailMainResponses.EmailWelcomeMessage));
+                await dc.Context.SendActivityAsync(_responseManager.GetResponse(EmailMainResponses.EmailWelcomeMessage));
             }
         }
 
@@ -82,7 +89,8 @@ namespace EmailSkill.Dialogs.Main
             }
             else
             {
-                var result = await luisService.RecognizeAsync<Email>(dc.Context, CancellationToken.None);
+                var turnResult = EndOfTurn;
+                var result = await luisService.RecognizeAsync<EmailLU>(dc.Context, CancellationToken.None);
                 var intent = result?.TopIntent().intent;
                 var generalTopIntent = state.GeneralLuisResult?.TopIntent().intent;
 
@@ -95,51 +103,51 @@ namespace EmailSkill.Dialogs.Main
                 // switch on general intents
                 switch (intent)
                 {
-                    case Email.Intent.SendEmail:
+                    case EmailLU.Intent.SendEmail:
                         {
-                            await dc.BeginDialogAsync(nameof(SendEmailDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(SendEmailDialog), skillOptions);
                             break;
                         }
 
-                    case Email.Intent.Forward:
+                    case EmailLU.Intent.Forward:
                         {
-                            await dc.BeginDialogAsync(nameof(ForwardEmailDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(ForwardEmailDialog), skillOptions);
                             break;
                         }
 
-                    case Email.Intent.Reply:
+                    case EmailLU.Intent.Reply:
                         {
-                            await dc.BeginDialogAsync(nameof(ReplyEmailDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(ReplyEmailDialog), skillOptions);
                             break;
                         }
 
-                    case Email.Intent.SearchMessages:
-                    case Email.Intent.CheckMessages:
-                    case Email.Intent.ReadAloud:
-                    case Email.Intent.QueryLastText:
+                    case EmailLU.Intent.SearchMessages:
+                    case EmailLU.Intent.CheckMessages:
+                    case EmailLU.Intent.ReadAloud:
+                    case EmailLU.Intent.QueryLastText:
                         {
-                            await dc.BeginDialogAsync(nameof(ShowEmailDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(ShowEmailDialog), skillOptions);
                             break;
                         }
 
-                    case Email.Intent.Delete:
+                    case EmailLU.Intent.Delete:
                         {
-                            await dc.BeginDialogAsync(nameof(DeleteEmailDialog), skillOptions);
+                            turnResult = await dc.BeginDialogAsync(nameof(DeleteEmailDialog), skillOptions);
                             break;
                         }
 
-                    case Email.Intent.None:
+                    case EmailLU.Intent.None:
                         {
                             if (generalTopIntent == General.Intent.Next || generalTopIntent == General.Intent.Previous)
                             {
-                                await dc.BeginDialogAsync(nameof(ShowEmailDialog), skillOptions);
+                                turnResult = await dc.BeginDialogAsync(nameof(ShowEmailDialog), skillOptions);
                             }
                             else
                             {
-                                await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(EmailSharedResponses.DidntUnderstandMessage));
+                                await dc.Context.SendActivityAsync(_responseManager.GetResponse(EmailSharedResponses.DidntUnderstandMessage));
                                 if (_skillMode)
                                 {
-                                    await CompleteAsync(dc);
+                                    turnResult = new DialogTurnResult(DialogTurnStatus.Complete);
                                 }
                             }
 
@@ -148,15 +156,20 @@ namespace EmailSkill.Dialogs.Main
 
                     default:
                         {
-                            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(EmailMainResponses.FeatureNotAvailable));
+                            await dc.Context.SendActivityAsync(_responseManager.GetResponse(EmailMainResponses.FeatureNotAvailable));
 
                             if (_skillMode)
                             {
-                                await CompleteAsync(dc);
+                                turnResult = new DialogTurnResult(DialogTurnStatus.Complete);
                             }
 
                             break;
                         }
+                }
+
+                if (turnResult != EndOfTurn)
+                {
+                    await CompleteAsync(dc);
                 }
             }
         }
@@ -225,7 +238,7 @@ namespace EmailSkill.Dialogs.Main
                 var localeConfig = _skillConfig.LocaleConfigurations[locale];
 
                 // Update state with email luis result and entities
-                var emailLuisResult = await localeConfig.LuisServices["email"].RecognizeAsync<Email>(dc.Context, cancellationToken);
+                var emailLuisResult = await localeConfig.LuisServices["email"].RecognizeAsync<EmailLU>(dc.Context, cancellationToken);
                 var state = await _stateAccessor.GetAsync(dc.Context, () => new EmailSkillState());
                 state.LuisResult = emailLuisResult;
 
@@ -270,7 +283,7 @@ namespace EmailSkill.Dialogs.Main
 
         private async Task<InterruptionAction> OnCancel(DialogContext dc)
         {
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(EmailMainResponses.CancelMessage));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(EmailMainResponses.CancelMessage));
             await CompleteAsync(dc);
             await dc.CancelAllDialogsAsync();
             return InterruptionAction.StartedDialog;
@@ -278,7 +291,7 @@ namespace EmailSkill.Dialogs.Main
 
         private async Task<InterruptionAction> OnHelp(DialogContext dc)
         {
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(EmailMainResponses.HelpMessage));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(EmailMainResponses.HelpMessage));
             return InterruptionAction.MessageSentToUser;
         }
 
@@ -304,24 +317,24 @@ namespace EmailSkill.Dialogs.Main
                 await adapter.SignOutUserAsync(dc.Context, token.ConnectionName);
             }
 
-            await dc.Context.SendActivityAsync(dc.Context.Activity.CreateReply(EmailMainResponses.LogOut));
+            await dc.Context.SendActivityAsync(_responseManager.GetResponse(EmailMainResponses.LogOut));
 
             return InterruptionAction.StartedDialog;
         }
 
         private void RegisterDialogs()
         {
-            AddDialog(new ForwardEmailDialog(_skillConfig, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new SendEmailDialog(_skillConfig, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new ShowEmailDialog(_skillConfig, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new ReplyEmailDialog(_skillConfig, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
-            AddDialog(new DeleteEmailDialog(_skillConfig, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new ForwardEmailDialog(_skillConfig, _responseManager, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new SendEmailDialog(_skillConfig, _responseManager, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new ShowEmailDialog(_skillConfig, _responseManager, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new ReplyEmailDialog(_skillConfig, _responseManager, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
+            AddDialog(new DeleteEmailDialog(_skillConfig, _responseManager, _stateAccessor, _dialogStateAccessor, _serviceManager, TelemetryClient));
         }
 
         private void GetReadingDisplayConfig()
         {
-            _skillConfig.Properties.TryGetValue("displaySize", out object maxDisplaySize);
-            _skillConfig.Properties.TryGetValue("readSize", out object maxReadSize);
+            _skillConfig.Properties.TryGetValue("displaySize", out var maxDisplaySize);
+            _skillConfig.Properties.TryGetValue("readSize", out var maxReadSize);
 
             if (maxDisplaySize != null)
             {

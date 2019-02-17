@@ -2,13 +2,25 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Dialogs;
+using Microsoft.Bot.Configuration;
+using Microsoft.Bot.Solutions.Middleware.Telemetry;
+using Microsoft.Bot.Solutions.Models.Proactive;
+using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
+using ToDoSkill.Dialogs.AddToDo.Resources;
+using ToDoSkill.Dialogs.DeleteToDo.Resources;
 using ToDoSkill.Dialogs.Main;
+using ToDoSkill.Dialogs.Main.Resources;
+using ToDoSkill.Dialogs.MarkToDo.Resources;
+using ToDoSkill.Dialogs.Shared.Resources;
+using ToDoSkill.Dialogs.ShowToDo.Resources;
 using ToDoSkill.ServiceClients;
+using Utilities.TaskExtensions;
 
 namespace ToDoSkill
 {
@@ -18,6 +30,7 @@ namespace ToDoSkill
     public class ToDoSkill : IBot
     {
         private readonly SkillConfigurationBase _services;
+        private readonly ResponseManager _responseManager;
         private readonly ConversationState _conversationState;
         private readonly UserState _userState;
         private readonly IBotTelemetryClient _telemetryClient;
@@ -25,7 +38,17 @@ namespace ToDoSkill
         private DialogSet _dialogs;
         private bool _skillMode;
 
-        public ToDoSkill(SkillConfigurationBase services, ConversationState conversationState, UserState userState, IBotTelemetryClient telemetryClient, IServiceManager serviceManager = null, bool skillMode = false)
+        public ToDoSkill(
+            SkillConfigurationBase services,
+            EndpointService endpointService,
+            ConversationState conversationState,
+            UserState userState,
+            ProactiveState proactiveState,
+            IBotTelemetryClient telemetryClient,
+            IBackgroundTaskQueue backgroundTaskQueue,
+            bool skillMode = false,
+            ResponseManager responseManager = null,
+            IServiceManager serviceManager = null)
         {
             _skillMode = skillMode;
             _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -34,8 +57,24 @@ namespace ToDoSkill
             _telemetryClient = telemetryClient ?? throw new ArgumentNullException(nameof(telemetryClient));
             _serviceManager = serviceManager ?? new ServiceManager();
 
+            if (responseManager == null)
+            {
+                var supportedLanguages = services.LocaleConfigurations.Keys.ToArray();
+                responseManager = new ResponseManager(
+                    new IResponseIdCollection[]
+                    {
+                        new AddToDoResponses(),
+                        new DeleteToDoResponses(),
+                        new ToDoMainResponses(),
+                        new MarkToDoResponses(),
+                        new ToDoSharedResponses(),
+                        new ShowToDoResponses(),
+                    }, supportedLanguages);
+            }
+
+            _responseManager = responseManager;
             _dialogs = new DialogSet(_conversationState.CreateProperty<DialogState>(nameof(DialogState)));
-            _dialogs.Add(new MainDialog(_services, _conversationState, _userState, _telemetryClient, _serviceManager, _skillMode));
+            _dialogs.Add(new MainDialog(_services, _responseManager, _conversationState, _userState, _telemetryClient, _serviceManager, _skillMode));
         }
 
         /// <summary>
@@ -46,6 +85,8 @@ namespace ToDoSkill
         /// <returns>A <see cref="TaskItem"/> representing the asynchronous operation.</returns>
         public async Task OnTurnAsync(ITurnContext turnContext, CancellationToken cancellationToken)
         {
+            turnContext.TurnState.Add(TelemetryLoggerMiddleware.AppInsightsServiceKey, _telemetryClient);
+
             var dc = await _dialogs.CreateContextAsync(turnContext);
 
             if (dc.ActiveDialog != null)

@@ -49,7 +49,7 @@ namespace EmailSkill.Util
             return speakString;
         }
 
-        public static string ToSpeechEmailDetailString(Message message, TimeZoneInfo timeZone)
+        public static string ToSpeechEmailDetailString(Message message, TimeZoneInfo timeZone, bool isNeedContent = false)
         {
             string speakString = string.Empty;
 
@@ -60,8 +60,10 @@ namespace EmailSkill.Util
                     : message.ReceivedDateTime.Value.UtcDateTime.ToRelativeString(timeZone);
                 string subject = message.Subject ?? EmailCommonStrings.EmptySubject;
                 string sender = (message.Sender?.EmailAddress?.Name != null) ? message.Sender.EmailAddress.Name : EmailCommonStrings.UnknownSender;
-                string content = message.BodyPreview ?? EmailCommonStrings.EmptyContent;
-                speakString = string.Format(EmailCommonStrings.FromDetailsFormatAll, sender, time, subject, content);
+                string content = message.Body.Content ?? EmailCommonStrings.EmptyContent;
+
+                var stringFormat = isNeedContent ? EmailCommonStrings.FromDetailsWithContentFormat : EmailCommonStrings.FromDetailsFormatAll;
+                speakString = string.Format(stringFormat, sender, time, subject, content);
             }
 
             return speakString;
