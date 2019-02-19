@@ -392,7 +392,7 @@ namespace VirtualAssistant.Dialogs.Main
         private async Task<bool> HandleCommands(DialogContext dc)
         {
             var handled = false;
-            var command = dc.Context.Activity.Text;
+            var command = dc.Context.Activity.Text.ToLower();
             var response = dc.Context.Activity.CreateReply();
             Coordinate currentLocation = new Coordinate();
             var parameters = await _parametersAccessor.GetAsync(dc.Context, () => new Dictionary<string, object>()).ConfigureAwait(false);
