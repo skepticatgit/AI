@@ -36,20 +36,6 @@
       "id": "faq",
       "name": "FAQ",
       "luPath": "CognitiveModels\\QnA\\en\\faq.lu"
-    },
-    {
-      "type": "dispatch",
-      "id": "dispatch",
-      "name": "Dispatch",
-      "luPath": "CognitiveModels\\LUIS\\en\\dispatch.lu",
-      "serviceIds": [
-        "general",
-        "calendar",
-        "email",
-        "todo",
-        "pointofinterest",
-        "faq"
-      ]
     }
   ]
 }

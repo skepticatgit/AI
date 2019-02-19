@@ -12,6 +12,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="data\**" />
+    <Content Remove="data\**" />
+    <EmbeddedResource Remove="data\**" />
+    <None Remove="data\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Google.Apis" Version="1.36.1" />
     <PackageReference Include="Google.Apis.Gmail.v1" Version="1.36.1.1342" />
     <PackageReference Include="Google.Apis.People.v1" Version="1.25.0.830" />
@@ -94,6 +101,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="CognitiveModels\Dispatch\en\" />
     <Folder Include="Dialogs\Shared\Resources\" />
   </ItemGroup>
 

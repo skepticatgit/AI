@@ -45,6 +45,13 @@ foreach ($locale in $localeArr)
 	# Deploy Dispatch, LUIS (calendar, email, todo, and general), and QnA Maker for the locale
     Write-Host "Deploying $($locale) resources..."
     msbot clone services -n "$($name)$($langCode)" -l $location --luisAuthoringKey $luisAuthoringKey --groupName $groupName --force --quiet --folder "$($PSScriptRoot)\$($langCode)" | Out-Null
+
+	# Create Dispatch folder and change directory
+	md -Force "$($PSScriptRoot)\..\CognitiveModels\Dispatch" > $null
+	cd "$($PSScriptRoot)\..\CognitiveModels\Dispatch"  > $null
+
+	# run dispatch create against the new bot file
+	dispatch create -b "$($PSScriptRoot)\..\LocaleConfigurations\$($name)$($langCode).bot" | msbot connect dispatch --stdin
 }
 
 Write-Host "Done."

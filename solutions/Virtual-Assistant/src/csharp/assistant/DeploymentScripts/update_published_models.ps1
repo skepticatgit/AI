@@ -92,17 +92,11 @@ foreach ($botFile in $botFiles) {
 				if ($service) {
 
 					# if LUIS or dispatch call UpdateLUIS, else call UpdateQnA
-					if (($service.type -eq "luis") -or ($service.type -eq "dispatch")) {
+					if ($service.type -eq "luis") {
 						UpdateLUIS $botFilePath $langCode $service.id
-
-						if ($service.id -eq "dispatch") {
-							luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\dispatch.luis" -cs Dispatch -o "$($basePath)\..\Dialogs\Shared\Resources"
-						}
-						else {
-							luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\$($service.id).luis" -cs "$($recipeService.Name)LU" -o "$($basePath)\..\$($recipeService.luPath)\..\..\..\..\Dialogs\Shared\Resources"
-						}
+						luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\$($service.id).luis" -cs "$($recipeService.Name)LU" -o "$($basePath)\..\$($recipeService.luPath)\..\..\..\..\Dialogs\Shared\Resources"
 					}
-					elseif ($service.type -eq "faq") {
+					elseif ($service.type -eq "qna") {
 						UpdateQnA $botFilePath $langCode $service.id
 					}
 				}
@@ -127,17 +121,11 @@ foreach ($botFile in $botFiles) {
 				$service = $botServices.services | where { $_.id -eq $recipeService.id }
 
 				if ($service) {
-					if (($service.type -eq "luis") -or ($service.type -eq "dispatch")) {
+					if ($service.type -eq "luis") {
 						UpdateLUIS $botFilePath $langCode $service.id
-
-						if ($service.id -eq "dispatch") {
-							luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\dispatch.luis" -cs Dispatch -o "$($basePath)\..\Dialogs\Shared\Resources"
-						}
-						else {
-							luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\$($service.id).luis" -cs "$($recipeService.Name)LU" -o "$($basePath)\..\$($recipeService.luPath)\..\..\..\..\Dialogs\Shared\Resources"
-						}
+						luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\$($service.id).luis" -cs "$($recipeService.Name)LU" -o "$($basePath)\..\$($recipeService.luPath)\..\..\..\..\Dialogs\Shared\Resources"
 					}
-					elseif ($service.type -eq "faq") {
+					elseif ($service.type -eq "qna") {
 						UpdateQnA $botFilePath $langCode $service.id
 					}
 				}
@@ -145,13 +133,7 @@ foreach ($botFile in $botFiles) {
 					if ($recipeService.type -eq "luis") {
 						$sampleService = $botServices.services | where { $_.type -eq "luis" } | Select-Object -First 1
 						ImportLUIS $botFileName $botFilePath $langCode $recipeService.id $sampleService
-
-						if ($service.id -eq "dispatch") {
-							luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\dispatch.luis" -cs Dispatch -o "$($basePath)\..\Dialogs\Shared\Resources"
-						}
-						else {
-							luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\$($service.id).luis" -cs "$($recipeService.Name)LU" -o "$($basePath)\..\$($recipeService.luPath)\..\..\..\..\Dialogs\Shared\Resources"
-						}
+						luisgen "$($basePath)\..\DeploymentScripts\$($langCode)\$($service.id).luis" -cs "$($recipeService.Name)LU" -o "$($basePath)\..\$($recipeService.luPath)\..\..\..\..\Dialogs\Shared\Resources"
 					}
 					elseif ($recipeService.type -eq "qna") {
 						$sampleService = $botServices.services | where { $_.type -eq "qna" } | Select-Object -First 1
@@ -160,5 +142,16 @@ foreach ($botFile in $botFiles) {
 				}
 			}
 		}
+
+		# Create LocaleConfigurations folder and change directory
+		md -Force "$($PSScriptRoot)\..\CognitiveModels\Dispatch\$($langCode)" > $null
+		cd "$($PSScriptRoot)\..\CognitiveModels\Dispatch"  > $null
+
+		# Run dispatch refresh
+		dispatch refresh -b $botFilePath
+
+		# Run LuisGen for dispatch model
+		$dispatchFile =  get-childitem $basePath -recurse | where {$_.extension -eq ".bot"} | Select-Object -First 1
+		luisgen $dispatchFile -cs Dispatch -o "$($basePath)\..\Dialogs\Shared\Resources"
 	}
 }
