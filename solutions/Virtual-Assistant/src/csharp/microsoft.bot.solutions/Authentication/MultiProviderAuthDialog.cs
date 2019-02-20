@@ -74,7 +74,7 @@ namespace Microsoft.Bot.Solutions.Authentication
                 var adapter = stepContext.Context.Adapter as BotFrameworkAdapter;
                 var tokenStatusCollection = await adapter.GetTokenStatusAsync(stepContext.Context, stepContext.Context.Activity.From.Id);
 
-                var matchingProviders = tokenStatusCollection.Where(p => p.HasToken && _skillConfiguration.AuthenticationConnections.Any(t => t.Key == p.ConnectionName)).ToList();
+                var matchingProviders = tokenStatusCollection.Where(p => p.HasToken.Value && _skillConfiguration.AuthenticationConnections.Any(t => t.Key == p.ConnectionName)).ToList();
 
                 if (matchingProviders.Count() == 1)
                 {
