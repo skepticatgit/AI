@@ -13,10 +13,11 @@ using Microsoft.Bot.Solutions.Models.Proactive;
 using Microsoft.Bot.Solutions.Resources;
 using Microsoft.Bot.Solutions.Responses;
 using Microsoft.Bot.Solutions.Skills;
+using Microsoft.Bot.Solutions.TaskExtensions;
 using Microsoft.Bot.Solutions.Testing;
 using Microsoft.Bot.Solutions.Testing.Fakes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Utilities.TaskExtensions;
+using PointOfInterestSkill.Dialogs.Shared.Resources;
 using VirtualAssistant.Tests.LuisTestUtils;
 
 namespace VirtualAssistant.Tests
@@ -64,7 +65,8 @@ namespace VirtualAssistant.Tests
                 responseTemplates: new IResponseIdCollection[]
                 {
                     // todo: register response files
-                    new CommonResponses()
+                    new CommonResponses(),
+                    new POISharedResponses()
                 },
                 locales: new string[] { "en", "de", "es", "fr", "it", "zh" });
 
